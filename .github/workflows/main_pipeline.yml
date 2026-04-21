@@ -1,58 +1,59 @@
-name: Reusable Build and Push to ECR Template
+name: TechMarket Main CI/CD Pipeline (AWS ECR Version)
 
 on:
-  workflow_call:
-    inputs:
-      aws-region:
-        description: 'Región de AWS (ej. us-east-1)'
-        required: true
-        type: string
-      ecr-repository:
-        description: 'Nombre del repositorio en ECR (ej. techmarket-repo)'
-        required: true
-        type: string
-      image-tag:
-        description: 'Etiqueta de la versión (ej. v1.0.0)'
-        required: true
-        type: string
-    secrets:
-      AWS_ACCESS_KEY_ID:
-        required: true
-      AWS_SECRET_ACCESS_KEY:
-        required: true
-      AWS_SESSION_TOKEN:
-        required: false
+  push:
+    branches:
+      - main
 
 jobs:
-  build-and-push-ecr:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout del código
-        uses: actions/checkout@v4
+  # -------------------------------------------------------------
+  # 1. FASE DE CONSTRUCCIÓN (Subiendo a ECR)
+  # -------------------------------------------------------------
+  build_phase:
+    name: Fase de Construcción
+    uses: ./.github/workflows/templates/template_build.yml
+    with:
+      aws-region: 'us-east-1' # Cambia esto a la región de tu Learner Lab (ej. us-east-1)
+      ecr-repository: 'techmarket-repo'
+      image-tag: 'v1.0.0'
+    secrets:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }} # Clave para el Learner Lab
 
-      # Acción externa clave: Autenticación con AWS
-      - name: Configurar credenciales de AWS
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ inputs.aws-region }}
+  # -------------------------------------------------------------
+  # 2. FASE DE PRUEBAS
+  # -------------------------------------------------------------
+  test_phase:
+    name: Fase de Pruebas de Seguridad
+    needs: build_phase
+    uses: ./.github/workflows/templates/template_test.yml
+    with:
+      # La URL de tu imagen en ECR tiene este formato:
+      # <ID-CUENTA>.dkr.ecr.<REGION>.amazonaws.com/<REPO>:<TAG>
+      image-to-scan: '${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/techmarket-repo:v1.0.0'
+    secrets:
+      # Trivy necesitará credenciales de AWS para poder descargar y escanear la imagen privada
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
 
-      # Acción externa: Iniciar sesión en ECR
-      - name: Login en Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      # Construir, etiquetar y subir la imagen
-      - name: Build, tag, and push image to Amazon ECR
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ inputs.ecr-repository }}
-          IMAGE_TAG: ${{ inputs.image-tag }}
-        run: |
-          # Construimos la imagen localmente
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          
-          # La subimos al registro de ECR
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+  # -------------------------------------------------------------
+  # 3. FASE DE DESPLIEGUE (ENTORNO DESARROLLO)
+  # -------------------------------------------------------------
+  deploy_dev_phase:
+    name: Fase de Despliegue (Dev)
+    needs: test_phase
+    uses: ./.github/workflows/templates/template_deploy.yml
+    with:
+      environment: 'dev'
+      aws-region: 'us-east-1'
+      ecr-repository: 'techmarket-repo'
+      image-tag: 'v1.0.0'
+      app-port: '8080'
+    secrets:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
+      EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+      # Pasamos el registro ECR (ID de cuenta + URL) como secreto para el login por SSH
+      ECR_REGISTRY: '${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com'
