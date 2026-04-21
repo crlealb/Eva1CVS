@@ -1,0 +1,25 @@
+name: Reusable Test (Security Scan) Template
+
+on:
+  workflow_call:
+    inputs:
+      image-to-scan:
+        description: 'Imagen exacta a escanear (ej. mi-usuario/techmarket:v1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      # Acción externa para escanear vulnerabilidades en contenedores
+      - name: Escaneo de vulnerabilidades con Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ inputs.image-to-scan }}'
+          format: 'table'
+          # Para que no detenga el pipeline si encuentra algo leve, configuramos los niveles
+          exit-code: '0'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
