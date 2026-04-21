@@ -4,7 +4,7 @@ WORKDIR /app
 
 COPY package.json package-lock.json ./
 
-RUN npm ci --only=dev
+RUN npm install --omit=dev
 
 COPY index.js ./
 
