@@ -1,0 +1,56 @@
+name: Reusable Deploy to EC2 Template
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Entorno de destino (dev, qa, prod)'
+        required: true
+        type: string
+      image-name:
+        description: 'Nombre de la imagen a descargar'
+        required: true
+        type: string
+      image-tag:
+        description: 'Tag de la imagen a descargar'
+        required: true
+        type: string
+      app-port:
+        description: 'Puerto expuesto en la instancia EC2'
+        required: true
+        type: string
+    secrets:
+      EC2_HOST:
+        required: true
+      EC2_USERNAME:
+        required: true
+      EC2_SSH_KEY:
+        required: true
+
+jobs:
+  deploy-via-ssh:
+    name: Deploy to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    steps:
+      # Acción externa: Conexión SSH [cite: 37]
+      - name: Ejecutar despliegue en EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            echo "Iniciando despliegue en entorno: ${{ inputs.environment }}"
+            
+            docker pull ${{ inputs.image-name }}:${{ inputs.image-tag }}
+            
+            docker stop techmarket-${{ inputs.environment }} || true
+            docker rm techmarket-${{ inputs.environment }} || true
+            
+            docker run -d \
+              --name techmarket-${{ inputs.environment }} \
+              -p ${{ inputs.app-port }}:80 \
+              --restart unless-stopped \
+              ${{ inputs.image-name }}:${{ inputs.image-tag }}
+              
+            echo "Despliegue exitoso en el puerto ${{ inputs.app-port }}"
