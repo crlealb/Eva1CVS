@@ -1,0 +1,10 @@
+{
+  "name": "techmarket-app",
+  "version": "1.0.0",
+  "description": "App de prueba para evaluación de pipelines CI/CD",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {}
+}
