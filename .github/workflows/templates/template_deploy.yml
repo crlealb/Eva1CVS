@@ -1,56 +1,64 @@
-name: Reusable Deploy to EC2 Template
+name: Reusable Deploy to ECS Template
 
 on:
   workflow_call:
     inputs:
-      environment:
-        description: 'Entorno de destino (dev, qa, prod)'
+      aws-region:
         required: true
         type: string
-      image-name:
-        description: 'Nombre de la imagen a descargar'
+      ecs-cluster:
         required: true
         type: string
-      image-tag:
-        description: 'Tag de la imagen a descargar'
+      ecs-service:
         required: true
         type: string
-      app-port:
-        description: 'Puerto expuesto en la instancia EC2'
+      task-definition-family:
+        required: true
+        type: string
+      container-name:
+        required: true
+        type: string
+      image-uri:
         required: true
         type: string
     secrets:
-      EC2_HOST:
+      AWS_ACCESS_KEY_ID:
         required: true
-      EC2_USERNAME:
+      AWS_SECRET_ACCESS_KEY:
         required: true
-      EC2_SSH_KEY:
-        required: true
+      AWS_SESSION_TOKEN:
+        required: false
 
 jobs:
-  deploy-via-ssh:
-    name: Deploy to ${{ inputs.environment }}
+  deploy-ecs:
     runs-on: ubuntu-latest
     steps:
-      # Acción externa: Conexión SSH [cite: 37]
-      - name: Ejecutar despliegue en EC2
-        uses: appleboy/ssh-action@v1.0.3
+      # 1. Autenticación en AWS
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USERNAME }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            echo "Iniciando despliegue en entorno: ${{ inputs.environment }}"
-            
-            docker pull ${{ inputs.image-name }}:${{ inputs.image-tag }}
-            
-            docker stop techmarket-${{ inputs.environment }} || true
-            docker rm techmarket-${{ inputs.environment }} || true
-            
-            docker run -d \
-              --name techmarket-${{ inputs.environment }} \
-              -p ${{ inputs.app-port }}:80 \
-              --restart unless-stopped \
-              ${{ inputs.image-name }}:${{ inputs.image-tag }}
-              
-            echo "Despliegue exitoso en el puerto ${{ inputs.app-port }}"
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ inputs.aws-region }}
+
+      # 2. Descargar la definición de tarea actual (evita tener que quemarla en el código)
+      - name: Descargar Task Definition actual
+        run: aws ecs describe-task-definition --task-definition ${{ inputs.task-definition-family }} --query taskDefinition > task-definition.json
+
+      # 3. Actualizar la definición con la nueva imagen de ECR
+      - name: Renderizar nueva Task Definition
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ inputs.container-name }}
+          image: ${{ inputs.image-uri }}
+
+      # 4. Desplegar en el clúster
+      - name: Desplegar en Amazon ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+          service: ${{ inputs.ecs-service }}
+          cluster: ${{ inputs.ecs-cluster }}
+          wait-for-service-stability: true
