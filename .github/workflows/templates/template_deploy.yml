@@ -1,64 +1,87 @@
-name: Reusable Deploy to ECS Template
+name: Reusable Deploy to Kubernetes Template
 
 on:
   workflow_call:
     inputs:
+      environment:
+        required: true
+        type: string
       aws-region:
-        required: true
-        type: string
-      ecs-cluster:
-        required: true
-        type: string
-      ecs-service:
-        required: true
-        type: string
-      task-definition-family:
-        required: true
-        type: string
-      container-name:
         required: true
         type: string
       image-uri:
         required: true
         type: string
+      app-port:
+        required: true
+        type: string
     secrets:
+      EC2_HOST:
+        required: true
+      EC2_USERNAME:
+        required: true
+      EC2_SSH_KEY:
+        required: true
       AWS_ACCESS_KEY_ID:
         required: true
       AWS_SECRET_ACCESS_KEY:
         required: true
       AWS_SESSION_TOKEN:
         required: false
+      ECR_REGISTRY:
+        required: true
 
 jobs:
-  deploy-ecs:
+  deploy-k8s:
     runs-on: ubuntu-latest
     steps:
-      # 1. Autenticación en AWS
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: appleboy/ssh-action@v1.0.3
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ inputs.aws-region }}
-
-      # 2. Descargar la definición de tarea actual (evita tener que quemarla en el código)
-      - name: Descargar Task Definition actual
-        run: aws ecs describe-task-definition --task-definition ${{ inputs.task-definition-family }} --query taskDefinition > task-definition.json
-
-      # 3. Actualizar la definición con la nueva imagen de ECR
-      - name: Renderizar nueva Task Definition
-        id: render-task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ inputs.container-name }}
-          image: ${{ inputs.image-uri }}
-
-      # 4. Desplegar en el clúster
-      - name: Desplegar en Amazon ECS
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-        with:
-          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
-          service: ${{ inputs.ecs-service }}
-          cluster: ${{ inputs.ecs-cluster }}
-          wait-for-service-stability: true
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            kubectl create namespace ${{ inputs.environment }} --dry-run=client -o yaml | kubectl apply -f -
+            
+            export AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+            export AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            export AWS_SESSION_TOKEN=${{ secrets.AWS_SESSION_TOKEN }}
+            export AWS_DEFAULT_REGION=${{ inputs.aws-region }}
+            
+            TOKEN=$(aws ecr get-login-password --region ${{ inputs.aws-region }})
+            
+            kubectl delete secret ecr-registry-secret --namespace ${{ inputs.environment }} --ignore-not-found
+            kubectl create secret docker-registry ecr-registry-secret \
+              --docker-server=${{ secrets.ECR_REGISTRY }} \
+              --docker-username=AWS \
+              --docker-password=$TOKEN \
+              --namespace ${{ inputs.environment }}
+            
+            cat <<EOF | kubectl apply -f -
+            apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              name: techmarket-app
+              namespace: ${{ inputs.environment }}
+            spec:
+              replicas: 1
+              selector:
+                matchLabels:
+                  app: techmarket-app
+              template:
+                metadata:
+                  labels:
+                    app: techmarket-app
+                spec:
+                  imagePullSecrets:
+                  - name: ecr-registry-secret
+                  containers:
+                  - name: techmarket-container
+                    image: ${{ inputs.image-uri }}
+                    imagePullPolicy: Always
+                    ports:
+                    - containerPort: 3000
+                      hostPort: ${{ inputs.app-port }}
+            EOF
+            
+            kubectl rollout restart deployment techmarket-app -n ${{ inputs.environment }}
