@@ -1,4 +1,4 @@
-name: TechMarket Main CI/CD Pipeline (AWS ECR Version)
+name: TechMarket Main CI/CD Pipeline
 
 on:
   push:
@@ -6,27 +6,20 @@ on:
       - main
 
 jobs:
-  # -------------------------------------------------------------
-  # 1. FASE DE CONSTRUCCIÓN (Subiendo a ECR)
-  # -------------------------------------------------------------
-  build_phase:
-    name: Fase de Construcción
+  build:
     uses: ./.github/workflows/templates/template_build.yml
     with:
       aws-region: 'us-east-1'
       ecr-repository: 'techmarket-repo'
       image-tag: 'v1.0.0'
+      app-color: 'Blue'
     secrets:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
 
-  # -------------------------------------------------------------
-  # 2. FASE DE PRUEBAS
-  # -------------------------------------------------------------
-  test_phase:
-    name: Fase de Pruebas de Seguridad
-    needs: build_phase
+  test:
+    needs: build
     uses: ./.github/workflows/templates/template_test.yml
     with:
       image-to-scan: '${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/techmarket-repo:v1.0.0'
@@ -35,20 +28,19 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
 
-  # -------------------------------------------------------------
-  # 3. FASE DE DESPLIEGUE (ENTORNO DESARROLLO)
-  # -------------------------------------------------------------
-deploy_dev:
-    needs: [build, test]
+  deploy_dev:
+    needs: test
     uses: ./.github/workflows/templates/template_deploy.yml
     with:
+      environment: 'dev'
       aws-region: 'us-east-1'
-      ecs-cluster: 'techmarket-cluster-dev'           
-      ecs-service: 'techmarket-service-dev'     
-      task-definition-family: 'techmarket-task-dev' 
-      container-name: 'techmarket-app'    
-      image-uri: '${{ needs.build.outputs.imagen-generada }}' 
+      image-uri: '${{ needs.build.outputs.imagen-generada }}'
+      app-port: '8080'
     secrets:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
+      EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+      ECR_REGISTRY: '${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com'
